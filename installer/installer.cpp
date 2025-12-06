@@ -25,7 +25,7 @@ int main() {
 
     if (!fs::exists(targetExe)) {
         std::wcout << L"错误：找不到 " << targetExe.c_str() << std::endl;
-        std::wcout << L"请确保 Installer.exe 和 AutoThemeSwitcher.exe 在同一目录下。" << std::endl;
+        std::wcout << L"请确保 installer.exe 和 AutoThemeSwitcher.exe 在同一目录下。" << std::endl;
         system("pause");
         return 1;
     }
@@ -38,22 +38,24 @@ int main() {
     GetUserNameW(username, &usernameLen);
     std::string author = WStringToString(username);
 
-    // 2. 准备 XML (更新了 Triggers 部分)
+    // 2. 准备 XML
+    // 重点修改了 <Triggers> 部分，增加了双重唤醒检测
     std::string xmlContent = R"(<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>2023-01-01T00:00:00</Date>
     <Author>)" + author + R"(</Author>
-    <Description>自动切换 Windows 深色/浅色模式 (07:00/17:00 定时 + 开机/唤醒/解锁检测)</Description>
+    <Description>自动切换 Windows 深色/浅色模式 (07:00/17:00 定时 + 无锁屏唤醒检测)</Description>
   </RegistrationInfo>
   
   <Triggers>
     <!-- 1. 登录时 (开机) -->
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <Delay>PT10S</Delay> <!-- 延迟10秒，等系统稳定 -->
     </LogonTrigger>
 
-    <!-- 2. 每天早上 07:00 执行 (切浅色) -->
+    <!-- 2. 每天早上 07:00 执行 -->
     <CalendarTrigger>
       <StartBoundary>2023-01-01T07:00:00</StartBoundary>
       <Enabled>true</Enabled>
@@ -62,7 +64,7 @@ int main() {
       </ScheduleByDay>
     </CalendarTrigger>
 
-    <!-- 3. 每天下午 17:00 执行 (切深色) -->
+    <!-- 3. 每天下午 17:00 执行 -->
     <CalendarTrigger>
       <StartBoundary>2023-01-01T17:00:00</StartBoundary>
       <Enabled>true</Enabled>
@@ -71,16 +73,17 @@ int main() {
       </ScheduleByDay>
     </CalendarTrigger>
 
-    <!-- 4. 工作站解锁时 (防止待机错过时间点) -->
+    <!-- 4. 【关键】工作站解锁 (保留给有锁屏习惯的情况) -->
     <SessionStateChangeTrigger>
       <StateChange>SessionUnlock</StateChange>
       <Enabled>true</Enabled>
     </SessionStateChangeTrigger>
 
-    <!-- 5. 系统从睡眠唤醒时 (精准补漏) -->
+    <!-- 5. 【核心修复】监听系统底层唤醒事件 (Event ID 1 & 107) -->
+    <!-- 无论是否设置锁屏，只要硬件从睡眠恢复，这个事件必发 -->
     <EventTrigger>
       <Enabled>true</Enabled>
-      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]] or *[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=107]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
     </EventTrigger>
   </Triggers>
 
@@ -93,6 +96,7 @@ int main() {
 
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <!-- 关键设置：允许在使用电池时运行 (防止笔记本没插电时不切换) -->
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
@@ -129,7 +133,7 @@ int main() {
     outFile << xmlContent;
     outFile.close();
 
-    std::wcout << L"正在注册精准定时任务 (07:00 & 17:00)..." << std::endl;
+    std::wcout << L"正在注册无锁屏唤醒任务..." << std::endl;
 
     // 4. 执行 schtasks
     std::wstring command = L"schtasks /Create /TN \"AutoThemeSwitcher\" /XML \"" + xmlPath.wstring() + L"\" /F";
@@ -141,7 +145,7 @@ int main() {
 
     if (result == 0) {
         std::wcout << L"\n成功！任务已更新。" << std::endl;
-        std::wcout << L"触发条件：每天07:00 | 每天17:00 | 开机 | 唤醒 | 解锁" << std::endl;
+        std::wcout << L"现在即使不锁定屏幕，睡眠唤醒时也会自动检测颜色。" << std::endl;
     }
     else {
         std::wcout << L"\n失败。请右键选择 [以管理员身份运行] 重试。" << std::endl;
