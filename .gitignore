@@ -1,0 +1,16 @@
+# ºöÂÔ Visual Studio ÁÙÊ±ÎÄ¼ş
+.vs/
+out/
+x64/
+x86/
+Debug/
+Release/
+*.user
+*.suo
+*.db
+*.ipch
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.pch
