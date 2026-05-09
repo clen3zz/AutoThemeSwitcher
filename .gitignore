@@ -1,16 +1,24 @@
-# ºöÂÔ Visual Studio ÁÙÊ±ÎÄ¼ş
-.vs/
+# CMake / GCC build artifacts
+build/
 out/
-x64/
-x86/
-Debug/
-Release/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+install_manifest.txt
+
+# Binaries and debug output
+*.exe
+*.dll
+*.a
+*.lib
+*.obj
+*.o
+*.pdb
+
+# Editor / OS noise
+.vscode/
+.idea/
 *.user
 *.suo
-*.db
-*.ipch
-*.obj
-*.exe
-*.pdb
-*.ilk
-*.pch
+Thumbs.db
