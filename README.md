@@ -27,7 +27,8 @@ cmake --build build
 ```text
 build/bin/
 ├─ AutoThemeSwitcher.exe
-└─ installer.exe
+├─ installer.exe
+└─ uninstaller.exe
 ```
 
 ## 安装和修改时间
@@ -61,7 +62,12 @@ cd build\bin
 
 重复运行 `installer.exe` 会更新计划任务时间。
 
-计划任务启用了空闲条件：计算机空闲超过 1 分钟后才会启动任务，并最多等待空闲 3 小时。因此在系统一直繁忙时，定时触发可能会延后执行。
+安装器会创建两个计划任务：
+
+- `AutoThemeSwitcher`：登录、解锁、睡眠唤醒后立即检测并切换。
+- `AutoThemeSwitcher_Scheduled`：每天在浅色/深色开始时间触发，但会等待系统空闲后执行。
+
+定时任务启用了空闲条件：计算机空闲超过 1 分钟后才会启动任务，并最多等待空闲 3 小时。因此在系统一直繁忙时，定时触发可能会延后执行；登录、解锁和睡眠唤醒不受这个空闲条件影响。
 
 ## 手动切换
 
@@ -73,8 +79,12 @@ cd build\bin
 
 不带参数运行时，程序会读取当前系统和应用主题，并切换到另一种模式。计划任务调用时会自动带上安装器配置的时间参数，因此仍按时间自动切换。
 
-## 卸载计划任务
+## 卸载
+
+双击或运行卸载器：
 
 ```powershell
-schtasks /Delete /TN "AutoThemeSwitcher" /F
+.\uninstaller.exe
 ```
+
+卸载器会自动请求管理员权限，并删除 `AutoThemeSwitcher` 和 `AutoThemeSwitcher_Scheduled` 两个计划任务。它不会删除 exe 文件，也不会修改当前主题。
