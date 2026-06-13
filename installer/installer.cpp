@@ -1,16 +1,13 @@
-﻿#include <windows.h>
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <filesystem>
-#include <shellapi.h>
+#include <windows.h>
 
+#include <filesystem>
+#include <iostream>
+#include <string>
+
+#include "task_manager.h"
 #include "theme_common.h"
 
 namespace fs = std::filesystem;
-
-const wchar_t* IMMEDIATE_TASK_NAME = L"AutoThemeSwitcher";
-const wchar_t* SCHEDULED_TASK_NAME = L"AutoThemeSwitcher_Scheduled";
 
 void ConsoleWrite(const std::wstring& text) {
     DWORD written = 0;
@@ -25,62 +22,6 @@ void ConsoleWrite(const std::wstring& text) {
 
 void ConsoleWriteLine(const std::wstring& text = L"") {
     ConsoleWrite(text + L"\n");
-}
-
-std::wstring QuoteArgument(const std::wstring& value) {
-    std::wstring quoted = L"\"";
-    for (wchar_t ch : value) {
-        if (ch == L'"') {
-            quoted += L"\\\"";
-        }
-        else {
-            quoted += ch;
-        }
-    }
-    quoted += L"\"";
-    return quoted;
-}
-
-std::wstring BuildArgumentString(int argc, wchar_t* argv[]) {
-    std::wstring arguments;
-    for (int i = 1; i < argc; ++i) {
-        if (!arguments.empty()) {
-            arguments += L" ";
-        }
-        arguments += QuoteArgument(argv[i]);
-    }
-    return arguments;
-}
-
-bool IsRunAsAdmin() {
-    BOOL isAdmin = FALSE;
-    PSID administratorsGroup = nullptr;
-    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
-
-    if (AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
-        DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &administratorsGroup)) {
-        CheckTokenMembership(nullptr, administratorsGroup, &isAdmin);
-        FreeSid(administratorsGroup);
-    }
-
-    return isAdmin == TRUE;
-}
-
-bool RelaunchAsAdmin(int argc, wchar_t* argv[]) {
-    wchar_t exePath[MAX_PATH];
-    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) == 0) {
-        return false;
-    }
-
-    std::wstring arguments = BuildArgumentString(argc, argv);
-    SHELLEXECUTEINFOW info = {};
-    info.cbSize = sizeof(info);
-    info.lpVerb = L"runas";
-    info.lpFile = exePath;
-    info.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
-    info.nShow = SW_SHOWNORMAL;
-
-    return ShellExecuteExW(&info) == TRUE;
 }
 
 void PrintUsage() {
@@ -147,198 +88,6 @@ bool ReadSwitchTimes(int argc, wchar_t* argv[], SwitchTimes& times) {
     return true;
 }
 
-std::wstring XmlEscape(const std::wstring& value) {
-    std::wstring escaped;
-    escaped.reserve(value.size());
-    for (wchar_t ch : value) {
-        switch (ch) {
-        case L'&': escaped += L"&amp;"; break;
-        case L'<': escaped += L"&lt;"; break;
-        case L'>': escaped += L"&gt;"; break;
-        case L'"': escaped += L"&quot;"; break;
-        case L'\'': escaped += L"&apos;"; break;
-        default: escaped += ch; break;
-        }
-    }
-    return escaped;
-}
-
-bool WriteUtf16XmlFile(const fs::path& path, const std::wstring& content) {
-    static_assert(sizeof(wchar_t) == 2, "This writer expects Windows UTF-16 wchar_t.");
-
-    std::ofstream outFile(path, std::ios::binary);
-    if (!outFile.is_open()) {
-        return false;
-    }
-
-    const unsigned char bom[] = { 0xFF, 0xFE };
-    outFile.write(reinterpret_cast<const char*>(bom), sizeof(bom));
-    outFile.write(reinterpret_cast<const char*>(content.data()), static_cast<std::streamsize>(content.size() * sizeof(wchar_t)));
-    return outFile.good();
-}
-
-std::wstring GenerateTaskXml(const fs::path& targetExe, const std::wstring& author, const std::wstring& description,
-    const std::wstring& triggers, const std::wstring& settings, const SwitchTimes& times) {
-    std::wstring exePathXml = XmlEscape(targetExe.wstring());
-    std::wstring lightStart = times.lightStartText;
-    std::wstring darkStart = times.darkStartText;
-    std::wstring arguments = XmlEscape(lightStart + L" " + darkStart);
-
-    return LR"(<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Date>2023-01-01T00:00:00</Date>
-    <Author>)" + author + LR"(</Author>
-    <Description>)" + description + LR"(</Description>
-  </RegistrationInfo>
-  
-)" + triggers + LR"(
-
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-
-)" + settings + LR"(
-
-  <Actions Context="Author">
-    <Exec>
-      <Command>)" + exePathXml + LR"(</Command>
-      <Arguments>)" + arguments + LR"(</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-)";
-}
-
-std::wstring GenerateImmediateTaskXml(const fs::path& targetExe, const std::wstring& author, const SwitchTimes& times) {
-    std::wstring description = L"自动切换 Windows 深色/浅色模式 (登录/解锁/唤醒即时检测)";
-    std::wstring triggers = LR"(  <Triggers>
-    <!-- 1. 登录时 (开机) -->
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <Delay>PT10S</Delay> <!-- 延迟10秒，等系统稳定 -->
-    </LogonTrigger>
-
-    <!-- 2. 工作站解锁 -->
-    <SessionStateChangeTrigger>
-      <StateChange>SessionUnlock</StateChange>
-      <Enabled>true</Enabled>
-    </SessionStateChangeTrigger>
-
-    <!-- 3. 监听系统底层唤醒事件 (Event ID 1 & 107) -->
-    <EventTrigger>
-      <Enabled>true</Enabled>
-      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]] or *[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=107]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
-    </EventTrigger>
-  </Triggers>)";
-
-    std::wstring settings = LR"(  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-  </Settings>)";
-
-    return GenerateTaskXml(targetExe, author, description, triggers, settings, times);
-}
-
-std::wstring GenerateScheduledTaskXml(const fs::path& targetExe, const std::wstring& author, const SwitchTimes& times) {
-    std::wstring lightStart = times.lightStartText;
-    std::wstring darkStart = times.darkStartText;
-    std::wstring description = L"自动切换 Windows 深色/浅色模式 (" + lightStart + L"/" + darkStart + L" 定时 + 空闲后执行)";
-
-    std::wstring triggers = LR"(  <Triggers>
-    <!-- 1. 每天浅色开始时间执行 -->
-    <CalendarTrigger>
-      <StartBoundary>2023-01-01T)" + lightStart + LR"(:00</StartBoundary>
-      <Enabled>true</Enabled>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
-    </CalendarTrigger>
-
-    <!-- 2. 每天深色开始时间执行 -->
-    <CalendarTrigger>
-      <StartBoundary>2023-01-01T)" + darkStart + LR"(:00</StartBoundary>
-      <Enabled>true</Enabled>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
-    </CalendarTrigger>
-  </Triggers>)";
-
-    std::wstring settings = LR"(  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <Duration>PT1M</Duration>
-      <WaitTimeout>PT3H</WaitTimeout>
-      <StopOnIdleEnd>false</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>true</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-  </Settings>)";
-
-    return GenerateTaskXml(targetExe, author, description, triggers, settings, times);
-}
-
-bool GetCurrentUserName(std::wstring& userName) {
-    wchar_t buffer[256];
-    DWORD bufferLength = 256;
-    if (!GetUserNameW(buffer, &bufferLength)) {
-        return false;
-    }
-
-    userName = buffer;
-    return true;
-}
-
-bool RegisterScheduledTask(const std::wstring& taskName, const fs::path& xmlPath) {
-    std::wstring command = L"schtasks /Create /TN \"" + taskName + L"\" /XML \"" + xmlPath.wstring() + L"\" /F";
-    return _wsystem(command.c_str()) == 0;
-}
-
-bool RegisterTaskFromXml(const fs::path& workingDir, const std::wstring& taskName, const std::wstring& xmlFileName, const std::wstring& xmlContent) {
-    fs::path xmlPath = workingDir / xmlFileName;
-    if (!WriteUtf16XmlFile(xmlPath, xmlContent)) {
-        ConsoleWriteLine(L"无法创建临时 XML 文件：" + xmlPath.wstring());
-        return false;
-    }
-
-    bool registered = RegisterScheduledTask(taskName, xmlPath);
-
-    try { fs::remove(xmlPath); }
-    catch (...) {}
-
-    return registered;
-}
-
 int RunInstaller(int argc, wchar_t* argv[]) {
     SwitchTimes times;
     if (!ReadSwitchTimes(argc, argv, times)) {
@@ -349,49 +98,26 @@ int RunInstaller(int argc, wchar_t* argv[]) {
     wchar_t buffer[MAX_PATH];
     GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     fs::path currentPath = buffer;
-    fs::path targetExe = currentPath.parent_path() / L"AutoThemeSwitcher.exe";
-
-    if (!fs::exists(targetExe)) {
-        ConsoleWriteLine(L"错误：找不到 " + targetExe.wstring());
-        ConsoleWriteLine(L"请确保 installer.exe 和 AutoThemeSwitcher.exe 在同一目录下。");
-        system("pause");
-        return 1;
-    }
-
-    std::wstring userName;
-    if (!GetCurrentUserName(userName)) {
-        ConsoleWriteLine(L"无法获取当前用户名。");
-        system("pause");
-        return 1;
-    }
-
     fs::path workingDir = currentPath.parent_path();
-    std::wstring author = XmlEscape(userName);
-    std::wstring immediateTaskXml = GenerateImmediateTaskXml(targetExe, author, times);
-    std::wstring scheduledTaskXml = GenerateScheduledTaskXml(targetExe, author, times);
+    fs::path targetExe = workingDir / L"AutoThemeSwitcher.exe";
 
     ConsoleWriteLine(L"正在注册计划任务...");
     ConsoleWriteLine(L"浅色开始时间：" + times.lightStartText + L"，深色开始时间：" + times.darkStartText);
 
-    bool immediateRegistered = RegisterTaskFromXml(workingDir, IMMEDIATE_TASK_NAME, L"AutoTheme_Immediate.xml", immediateTaskXml);
-    bool scheduledRegistered = RegisterTaskFromXml(workingDir, SCHEDULED_TASK_NAME, L"AutoTheme_Scheduled.xml", scheduledTaskXml);
+    std::wstring errorMessage;
+    bool installed = RegisterAutoThemeTasks(targetExe, workingDir, times, errorMessage);
 
-    if (immediateRegistered && scheduledRegistered) {
+    if (installed) {
         ConsoleWriteLine(L"\n成功！两个任务均已更新。");
         ConsoleWriteLine(L"登录/解锁/唤醒会立即检测，定时任务会等待系统空闲后执行。");
     }
     else {
         ConsoleWriteLine(L"\n失败。请确认已允许管理员权限后重试。");
-        if (!immediateRegistered) {
-            ConsoleWriteLine(L"- 即时触发任务注册失败：" + std::wstring(IMMEDIATE_TASK_NAME));
-        }
-        if (!scheduledRegistered) {
-            ConsoleWriteLine(L"- 定时空闲任务注册失败：" + std::wstring(SCHEDULED_TASK_NAME));
-        }
+        ConsoleWriteLine(errorMessage);
     }
 
     system("pause");
-    return (immediateRegistered && scheduledRegistered) ? 0 : 1;
+    return installed ? 0 : 1;
 }
 
 int wmain(int argc, wchar_t* argv[]) {

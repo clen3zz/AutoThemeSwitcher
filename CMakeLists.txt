@@ -14,6 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 add_executable(AutoThemeSwitcher WIN32
     source.cpp
+    theme_actions.cpp
 )
 
 target_include_directories(AutoThemeSwitcher PRIVATE
@@ -25,8 +26,24 @@ target_compile_definitions(AutoThemeSwitcher PRIVATE
     _UNICODE
 )
 
+add_executable(AutoThemeSwitcherGui WIN32
+    gui/main.cpp
+    task_manager.cpp
+    theme_actions.cpp
+)
+
+target_include_directories(AutoThemeSwitcherGui PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(AutoThemeSwitcherGui PRIVATE
+    UNICODE
+    _UNICODE
+)
+
 add_executable(installer
     installer/installer.cpp
+    task_manager.cpp
 )
 
 target_include_directories(installer PRIVATE
@@ -40,6 +57,7 @@ target_compile_definitions(installer PRIVATE
 
 add_executable(uninstaller
     uninstaller/uninstaller.cpp
+    task_manager.cpp
 )
 
 target_include_directories(uninstaller PRIVATE
@@ -52,15 +70,17 @@ target_compile_definitions(uninstaller PRIVATE
 )
 
 target_compile_options(AutoThemeSwitcher PRIVATE -Wall -Wextra)
+target_compile_options(AutoThemeSwitcherGui PRIVATE -Wall -Wextra)
 target_compile_options(installer PRIVATE -Wall -Wextra)
 target_compile_options(uninstaller PRIVATE -Wall -Wextra)
 
 if(WIN32)
     target_link_options(AutoThemeSwitcher PRIVATE -municode)
+    target_link_options(AutoThemeSwitcherGui PRIVATE -municode)
     target_link_options(installer PRIVATE -municode)
     target_link_options(uninstaller PRIVATE -municode)
 endif()
 
-install(TARGETS AutoThemeSwitcher installer uninstaller
+install(TARGETS AutoThemeSwitcher AutoThemeSwitcherGui installer uninstaller
     RUNTIME DESTINATION .
 )

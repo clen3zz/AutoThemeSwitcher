@@ -27,9 +27,22 @@ cmake --build build
 ```text
 build/bin/
 ├─ AutoThemeSwitcher.exe
+├─ AutoThemeSwitcherGui.exe
 ├─ installer.exe
 └─ uninstaller.exe
 ```
+
+## 图形界面
+
+双击运行：
+
+```powershell
+.\AutoThemeSwitcherGui.exe
+```
+
+控制面板可以查看当前主题和自动切换任务状态，修改浅色/深色开始时间，立即反转主题，按当前时间应用主题，安装/更新自动切换任务，以及卸载自动切换任务。
+
+点击“保存并更新自动切换”或“卸载自动切换”时，Windows 会请求管理员权限，用于创建或删除计划任务。窗口本身不会常驻后台；自动切换仍由 Windows 计划任务触发 `AutoThemeSwitcher.exe` 完成。
 
 ## 安装和修改时间
 
