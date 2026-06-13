@@ -502,7 +502,7 @@ bool RegisterAutoThemeTasks(const fs::path& targetExe, const fs::path& workingDi
 
 bool RegisterSolarRefreshTask(const fs::path& guiExe, const fs::path& workingDir, double latitude, double longitude, std::wstring& errorMessage) {
     if (!fs::exists(guiExe)) {
-        errorMessage = L"找不到 AutoThemeSwitcherGui.exe：" + guiExe.wstring();
+        errorMessage = L"找不到 AutoThemeSwitcher.exe：" + guiExe.wstring();
         return false;
     }
 

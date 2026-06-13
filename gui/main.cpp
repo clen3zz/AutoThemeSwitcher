@@ -954,6 +954,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 }
 
 int RunCommandMode(int argc, wchar_t* argv[]) {
+    if (argc == 3) {
+        SwitchTimes times;
+        if (!MakeSwitchTimes(argv[1], argv[2], times)) {
+            return 1;
+        }
+        return ApplyThemeForCurrentTime(times) ? 0 : 1;
+    }
+
     if (argc >= 2 && std::wstring(argv[1]) == L"--install") {
         if (!IsRunAsAdmin() || argc != 4) {
             return 1;
@@ -1002,7 +1010,7 @@ int RunCommandMode(int argc, wchar_t* argv[]) {
         }
 
         if (std::wstring(argv[1]) == L"--install-solar"
-            && !RegisterSolarRefreshTask(dir / L"AutoThemeSwitcherGui.exe", dir, latitude, longitude, errorMessage)) {
+            && !RegisterSolarRefreshTask(dir / L"AutoThemeSwitcher.exe", dir, latitude, longitude, errorMessage)) {
             return 1;
         }
 
@@ -1039,7 +1047,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
-    const wchar_t* className = L"AutoThemeSwitcherGuiWindow";
+    const wchar_t* className = L"AutoThemeSwitcherWindow";
     WNDCLASSW windowClass = {};
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = hInstance;
