@@ -28,6 +28,7 @@ target_compile_definitions(AutoThemeSwitcher PRIVATE
 
 add_executable(AutoThemeSwitcherGui WIN32
     gui/main.cpp
+    solar_calculator.cpp
     task_manager.cpp
     theme_actions.cpp
 )
@@ -39,6 +40,10 @@ target_include_directories(AutoThemeSwitcherGui PRIVATE
 target_compile_definitions(AutoThemeSwitcherGui PRIVATE
     UNICODE
     _UNICODE
+)
+
+target_link_libraries(AutoThemeSwitcherGui PRIVATE
+    dwmapi
 )
 
 add_executable(installer

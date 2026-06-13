@@ -106,6 +106,9 @@ int RunInstaller(int argc, wchar_t* argv[]) {
 
     std::wstring errorMessage;
     bool installed = RegisterAutoThemeTasks(targetExe, workingDir, times, errorMessage);
+    if (installed) {
+        installed = DeleteSolarRefreshTask(errorMessage);
+    }
 
     if (installed) {
         ConsoleWriteLine(L"\n成功！两个任务均已更新。");

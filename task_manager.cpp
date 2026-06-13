@@ -103,9 +103,10 @@ std::wstring DecodeFileText(const std::vector<unsigned char>& bytes) {
 }
 
 std::wstring GenerateTaskXml(const fs::path& targetExe, const std::wstring& author, const std::wstring& description,
-    const std::wstring& triggers, const std::wstring& settings, const SwitchTimes& times) {
+    const std::wstring& triggers, const std::wstring& settings, const std::wstring& argumentsText,
+    const std::wstring& runLevel = L"LeastPrivilege") {
     std::wstring exePathXml = XmlEscape(targetExe.wstring());
-    std::wstring arguments = XmlEscape(times.lightStartText + L" " + times.darkStartText);
+    std::wstring arguments = XmlEscape(argumentsText);
 
     return LR"(<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -120,7 +121,7 @@ std::wstring GenerateTaskXml(const fs::path& targetExe, const std::wstring& auth
   <Principals>
     <Principal id="Author">
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
+      <RunLevel>)" + runLevel + LR"(</RunLevel>
     </Principal>
   </Principals>
 
@@ -178,7 +179,7 @@ std::wstring GenerateImmediateTaskXml(const fs::path& targetExe, const std::wstr
     <Priority>7</Priority>
   </Settings>)";
 
-    return GenerateTaskXml(targetExe, author, description, triggers, settings, times);
+    return GenerateTaskXml(targetExe, author, description, triggers, settings, times.lightStartText + L" " + times.darkStartText);
 }
 
 std::wstring GenerateScheduledTaskXml(const fs::path& targetExe, const std::wstring& author, const SwitchTimes& times) {
@@ -226,7 +227,48 @@ std::wstring GenerateScheduledTaskXml(const fs::path& targetExe, const std::wstr
     <Priority>7</Priority>
   </Settings>)";
 
-    return GenerateTaskXml(targetExe, author, description, triggers, settings, times);
+    return GenerateTaskXml(targetExe, author, description, triggers, settings, times.lightStartText + L" " + times.darkStartText);
+}
+
+std::wstring GenerateSolarRefreshTaskXml(const fs::path& guiExe, const std::wstring& author, double latitude, double longitude) {
+    wchar_t latitudeBuffer[32];
+    wchar_t longitudeBuffer[32];
+    swprintf(latitudeBuffer, 32, L"%.6f", latitude);
+    swprintf(longitudeBuffer, 32, L"%.6f", longitude);
+
+    std::wstring description = L"每 7 天按经纬度重新计算日出/日落并更新 AutoThemeSwitcher 切换时间";
+    std::wstring arguments = std::wstring(L"--refresh-solar ") + latitudeBuffer + L" " + longitudeBuffer;
+    std::wstring triggers = LR"(  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2023-01-01T03:30:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>7</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>)";
+
+    std::wstring settings = LR"(  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>)";
+
+    return GenerateTaskXml(guiExe, author, description, triggers, settings, arguments, L"HighestAvailable");
 }
 
 bool GetCurrentUserName(std::wstring& userName) {
@@ -307,6 +349,39 @@ bool ExtractArguments(const std::wstring& xml, std::wstring& arguments) {
     start += wcslen(L"<Arguments>");
     arguments = XmlUnescape(xml.substr(start, end - start));
     return true;
+}
+
+bool ExtractCalendarTimes(const std::wstring& xml, std::wstring& lightStart, std::wstring& darkStart) {
+    std::vector<std::wstring> times;
+    size_t pos = 0;
+    while ((pos = xml.find(L"<StartBoundary>", pos)) != std::wstring::npos) {
+        size_t start = pos + wcslen(L"<StartBoundary>");
+        size_t end = xml.find(L"</StartBoundary>", start);
+        if (end == std::wstring::npos) {
+            break;
+        }
+
+        std::wstring boundary = xml.substr(start, end - start);
+        size_t timePos = boundary.find(L'T');
+        if (timePos != std::wstring::npos && timePos + 6 <= boundary.size()) {
+            times.push_back(boundary.substr(timePos + 1, 5));
+        }
+        pos = end + wcslen(L"</StartBoundary>");
+    }
+
+    if (times.size() < 2) {
+        return false;
+    }
+
+    lightStart = times[0];
+    darkStart = times[1];
+    return true;
+}
+
+bool TryParseDouble(const std::wstring& text, double& value) {
+    wchar_t* end = nullptr;
+    value = wcstod(text.c_str(), &end);
+    return end != text.c_str() && *end == L'\0';
 }
 
 } // namespace
@@ -425,17 +500,59 @@ bool RegisterAutoThemeTasks(const fs::path& targetExe, const fs::path& workingDi
     return true;
 }
 
+bool RegisterSolarRefreshTask(const fs::path& guiExe, const fs::path& workingDir, double latitude, double longitude, std::wstring& errorMessage) {
+    if (!fs::exists(guiExe)) {
+        errorMessage = L"找不到 AutoThemeSwitcherGui.exe：" + guiExe.wstring();
+        return false;
+    }
+
+    std::wstring userName;
+    if (!GetCurrentUserName(userName)) {
+        errorMessage = L"无法获取当前用户名。";
+        return false;
+    }
+
+    std::wstring author = XmlEscape(userName);
+    std::wstring refreshTaskXml = GenerateSolarRefreshTaskXml(guiExe, author, latitude, longitude);
+    if (!RegisterTaskFromXml(workingDir, SOLAR_REFRESH_TASK_NAME, L"AutoTheme_SolarRefresh.xml", refreshTaskXml)) {
+        errorMessage = L"日出日落后台刷新任务注册失败。";
+        return false;
+    }
+
+    errorMessage.clear();
+    return true;
+}
+
+bool DeleteSolarRefreshTask(std::wstring& errorMessage) {
+    if (!TaskExists(SOLAR_REFRESH_TASK_NAME)) {
+        errorMessage.clear();
+        return true;
+    }
+
+    if (!DeleteTask(SOLAR_REFRESH_TASK_NAME)) {
+        errorMessage = L"日出日落后台刷新任务删除失败。";
+        return false;
+    }
+
+    errorMessage.clear();
+    return true;
+}
+
 bool DeleteAutoThemeTasks(std::wstring& errorMessage) {
     bool immediateDeleted = !TaskExists(IMMEDIATE_TASK_NAME) || DeleteTask(IMMEDIATE_TASK_NAME);
     bool scheduledDeleted = !TaskExists(SCHEDULED_TASK_NAME) || DeleteTask(SCHEDULED_TASK_NAME);
+    bool solarDeleted = !TaskExists(SOLAR_REFRESH_TASK_NAME) || DeleteTask(SOLAR_REFRESH_TASK_NAME);
 
-    if (!immediateDeleted || !scheduledDeleted) {
+    if (!immediateDeleted || !scheduledDeleted || !solarDeleted) {
         errorMessage = L"部分计划任务删除失败。";
         if (!immediateDeleted) {
             errorMessage += L" 即时触发任务失败。";
         }
         if (!scheduledDeleted) {
             errorMessage += L" 定时空闲任务失败。";
+        }
+        if (!solarDeleted) {
+            errorMessage += L" 日出日落后台刷新任务失败。";
         }
         return false;
     }
@@ -448,13 +565,36 @@ TaskStatus QueryAutoThemeTaskStatus() {
     TaskStatus status;
     status.immediateExists = TaskExists(IMMEDIATE_TASK_NAME);
     status.scheduledExists = TaskExists(SCHEDULED_TASK_NAME);
+    status.solarRefreshExists = TaskExists(SOLAR_REFRESH_TASK_NAME);
     status.queryOk = true;
     return status;
 }
 
 bool ReadInstalledSwitchTimes(SwitchTimes& times) {
     std::wstring xml;
-    if (!QueryTaskXml(SCHEDULED_TASK_NAME, xml) && !QueryTaskXml(IMMEDIATE_TASK_NAME, xml)) {
+    bool readScheduled = QueryTaskXml(SCHEDULED_TASK_NAME, xml);
+    if (!readScheduled && !QueryTaskXml(IMMEDIATE_TASK_NAME, xml)) {
+        return false;
+    }
+
+    std::wstring arguments;
+    std::wstring lightStart;
+    std::wstring darkStart;
+    if (ExtractArguments(xml, arguments)) {
+        std::wistringstream stream(arguments);
+        stream >> lightStart >> darkStart;
+    }
+
+    if (!lightStart.empty() && !darkStart.empty() && MakeSwitchTimes(lightStart, darkStart, times)) {
+        return true;
+    }
+
+    return readScheduled && ExtractCalendarTimes(xml, lightStart, darkStart) && MakeSwitchTimes(lightStart, darkStart, times);
+}
+
+bool ReadInstalledSolarCoordinates(double& latitude, double& longitude) {
+    std::wstring xml;
+    if (!QueryTaskXml(SOLAR_REFRESH_TASK_NAME, xml)) {
         return false;
     }
 
@@ -464,12 +604,13 @@ bool ReadInstalledSwitchTimes(SwitchTimes& times) {
     }
 
     std::wistringstream stream(arguments);
-    std::wstring lightStart;
-    std::wstring darkStart;
-    stream >> lightStart >> darkStart;
-    if (lightStart.empty() || darkStart.empty()) {
+    std::wstring mode;
+    std::wstring latitudeText;
+    std::wstring longitudeText;
+    stream >> mode >> latitudeText >> longitudeText;
+    if (mode != L"--refresh-solar" || latitudeText.empty() || longitudeText.empty()) {
         return false;
     }
 
-    return MakeSwitchTimes(lightStart, darkStart, times);
+    return TryParseDouble(latitudeText, latitude) && TryParseDouble(longitudeText, longitude);
 }
